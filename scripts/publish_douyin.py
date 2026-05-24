@@ -219,13 +219,21 @@ async def upload_note(
             await page.goto(UPLOAD_URL, timeout=TIMEOUT)
             await page.wait_for_timeout(3000)
 
-            # Step 2: 切换到图文模式
+            # Step 2: 切换到图文模式（含重试）
             print("🖼️ 切换到图文模式...")
-            try:
-                await page.get_by_text("发布图文", exact=True).click(timeout=5000)
-                await page.wait_for_timeout(1000)
-            except PlaywrightTimeout:
-                return {"success": False, "error": "找不到「发布图文」按钮，页面可能已改版"}
+            switch_ok = False
+            for attempt in range(3):
+                if attempt > 0:
+                    print(f"  🔄 重试切换图文模式 ({attempt + 1}/3)...")
+                    await page.wait_for_timeout(2000)
+                try:
+                    await page.get_by_text("发布图文", exact=True).click(timeout=5000)
+                    await page.wait_for_timeout(1000)
+                    switch_ok = True
+                    break
+                except PlaywrightTimeout:
+                    if attempt == 2:
+                        return {"success": False, "error": "找不到「发布图文」按钮，3次重试均失败，页面可能已改版"}
 
             # Step 3: 上传图片
             print("📤 上传图片...")
@@ -243,69 +251,101 @@ async def upload_note(
 
             # Step 4: 填标题和描述
             print("✍️ 填写标题和描述...")
-            await _fill_title_and_description(page, title, note, tags or [])
+            fill_errors = await _fill_title_and_description(page, title, note, tags or [])
+            if fill_errors:
+                return {"success": False, "error": f"填充失败: {'; '.join(fill_errors)}"}
 
             # Step 5: 定时发布（可选）
             if schedule_time:
                 print(f"⏰ 设置定时发布: {schedule_time}")
                 await _set_schedule_time(page, schedule_time)
 
-            # Step 6: 发布
+            # Step 6: 发布（含重试）
             print("🚀 点击发布...")
-            publish_btn = page.get_by_role("button", name="发布", exact=True)
-            await publish_btn.click()
+            result = await _click_publish_with_retry(page, max_retries=3)
+            if not result["success"]:
+                return result
 
-            try:
-                await page.wait_for_url(MANAGE_URL_PATTERN, timeout=30_000)
-                print("✅ 发布成功！")
+            # 保存可能会更新的 cookie
+            await context.storage_state(path=account_file)
 
-                # 保存可能会更新的 cookie
-                await context.storage_state(path=account_file)
+            result["title"] = title[:30]
+            result["images"] = len(images)
+            _write_result_file(result, account_file)
 
-                return {
-                    "success": True,
-                    "url": page.url,
-                    "title": title[:30],
-                    "images": len(images),
-                }
-            except PlaywrightTimeout:
-                # 检查是否有错误提示
-                error_text = page.locator('text=发布失败, text=参数错误, text=内容违规')
-                if await error_text.count() > 0:
-                    msg = await error_text.first.text_content()
-                    return {"success": False, "error": f"发布失败: {msg}"}
-                return {"success": False, "error": "发布超时，请手动检查草稿箱"}
+            print("✅ 发布成功！")
+            return result
 
         except Exception as e:
             if debug:
                 import traceback
                 traceback.print_exc()
-            return {"success": False, "error": str(e)}
+            error_result = {"success": False, "error": str(e)}
+            _write_result_file(error_result, account_file)
+            return error_result
         finally:
             await context.close()
             await browser.close()
 
 
-async def _fill_title_and_description(page, title: str, note: str, tags: List[str]):
-    """填充标题、描述、标签"""
+async def _click_publish_with_retry(page, max_retries: int = 3) -> dict:
+    """点击发布按钮并等待跳转，支持重试"""
+    last_error = None
+    for attempt in range(max_retries):
+        if attempt > 0:
+            print(f"  🔄 重试发布 ({attempt + 1}/{max_retries})...")
+            await page.wait_for_timeout(3000)
 
-    # 标题：在描述区块中找 input[type="text"]
-    # 导航方式：找到 "作品描述" 文本 → 向上2层 → 下一个兄弟 div
-    desc_label = page.locator('text=作品描述')
-    if await desc_label.count() == 0:
-        desc_label = page.get_by_text("作品描述")
+        try:
+            publish_btn = page.get_by_role("button", name="发布", exact=True)
+            await publish_btn.click()
+            await page.wait_for_url(MANAGE_URL_PATTERN, timeout=30_000)
+            return {
+                "success": True,
+                "url": page.url,
+            }
+        except PlaywrightTimeout:
+            last_error = "发布超时，URL 未跳转到管理页"
+            # 检查错误提示
+            error_text = page.locator('text=发布失败, text=参数错误, text=内容违规')
+            if await error_text.count() > 0:
+                msg = await error_text.first.text_content()
+                return {"success": False, "error": f"发布失败: {msg}"}
 
+    return {"success": False, "error": f"{last_error}（{max_retries}次重试）"}
+
+
+def _write_result_file(result: dict, account_file: str):
+    """写发布结果到 _runtime/douyin_result.json"""
+    skill_dir = Path(__file__).resolve().parent.parent
+    runtime_dir = skill_dir / "_runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    result_file = runtime_dir / "douyin_result.json"
+    result["account"] = Path(account_file).name
+    result["timestamp"] = datetime.now().isoformat()
+
+    with open(result_file, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    print(f"📄 结果已写入: {result_file}")
+
+
+async def _fill_title_and_description(page, title: str, note: str, tags: List[str]) -> List[str]:
+    """填充标题、描述、标签。返回错误列表，空列表 = 全部成功。"""
+    errors = []
+
+    # 标题输入框
     try:
-        # 标题输入框
         title_input = page.locator('input[type="text"]').first
         await title_input.click()
         await title_input.fill("")
         await title_input.fill(title[:30])  # 抖音标题限制 30 字
         await page.wait_for_timeout(500)
     except Exception as e:
-        print(f"  ⚠️ 标题填充异常: {e}")
+        errors.append(f"标题填充失败: {e}")
 
     # 描述：contenteditable 区域
+    editor = None
     try:
         editor = page.locator('.zone-container[contenteditable="true"]')
         await editor.click()
@@ -314,18 +354,23 @@ async def _fill_title_and_description(page, title: str, note: str, tags: List[st
         await editor.type(note)
         await page.wait_for_timeout(500)
     except Exception as e:
-        print(f"  ⚠️ 描述填充异常: {e}")
+        errors.append(f"描述填充失败: {e}")
 
     # 标签：在描述末尾加 #tag
-    if tags:
-        await editor.click()
-        await page.keyboard.press("End")
-        for tag in tags:
-            tag = tag.strip().lstrip("#")
-            if tag:
-                await editor.type(f" #{tag}")
-                await page.wait_for_timeout(100)
-        await page.wait_for_timeout(500)
+    if tags and editor is not None:
+        try:
+            await editor.click()
+            await page.keyboard.press("End")
+            for tag in tags:
+                tag = tag.strip().lstrip("#")
+                if tag:
+                    await editor.type(f" #{tag}")
+                    await page.wait_for_timeout(100)
+            await page.wait_for_timeout(500)
+        except Exception as e:
+            errors.append(f"标签填充失败: {e}")
+
+    return errors
 
 
 async def _set_schedule_time(page, schedule_time: str):
@@ -373,6 +418,7 @@ def main():
 
     # 登录
     parser.add_argument("--login", action="store_true", help="仅扫码登录，保存 cookie")
+    parser.add_argument("--validate", action="store_true", help="仅验证 cookie 有效性，不发布")
 
     # 账号
     parser.add_argument("--account", type=str, default="douyin_account.json",
@@ -397,10 +443,15 @@ def main():
         success = asyncio.run(_qrcode_login(account_file, headless=not args.headless))
         sys.exit(0 if success else 1)
 
+    account_file = os.path.abspath(args.account)
+
+    if args.validate:
+        valid = asyncio.run(cookie_auth(account_file))
+        print("✅ Cookie 有效" if valid else "⚠️ Cookie 无效")
+        sys.exit(0 if valid else 1)
+
     if not args.title or not args.images:
         parser.error("--title 和 --images 为必填参数 (或使用 --login 扫码)")
-
-    account_file = os.path.abspath(args.account)
 
     # 确保登录
     if not asyncio.run(ensure_login(account_file, headless=not args.headless)):
