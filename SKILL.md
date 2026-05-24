@@ -1,14 +1,14 @@
 ---
 name: matrix-image-publisher
 description: >
-  矩阵图文发布：将已渲染 PNG 发布到小红书 + 微信公众号「小绿书」。
-  输入为 PNG 文件 + 文案（由 evolution-cat-infographic 生产），输出为两个平台的待确认草稿。
+  矩阵图文发布：将已渲染 PNG 发布到小绿书 + 小红书 + 抖音。
+  输入为 PNG 文件 + 文案（由 evolution-cat-infographic 生产），输出为三个平台的待确认草稿。
   触发互斥：含"做/生成/生产"意图 → evolution-cat-infographic，非本 Skill。
 ---
 
 # 矩阵图文发布
 
-> 一篇内容，两个平台。MCP ChromeDevTools 浏览器自动化。PNG 由 evolution-cat-infographic 生产。
+> 一篇内容，三个平台。小绿书+小红书用 MCP ChromeDevTools，抖音用 Playwright 脚本。PNG 由 evolution-cat-infographic 生产。
 
 ## 前置检查
 
@@ -17,11 +17,15 @@ description: >
 #    - mp.weixin.qq.com tab（小绿书，已登录）
 #    - creator.xiaohongshu.com tab（小红书，已登录）
 
-# 2. 图片 ≥2 张 PNG
+# 2. 抖音：Playwright cookie 文件已生成
+ls douyin_account.json
+
+# 3. 图片 ≥2 张 PNG
 ls 小绿书/card_*.png | wc -l
 ```
 
 MCP Chrome 没有对应 tab → 手动在 MCP Chrome 中打开并登录。
+抖音 cookie 未生成 → `python scripts/publish_douyin.py --login --account douyin_account.json`
 
 ---
 
@@ -64,6 +68,11 @@ Phase 2: 环境
     ├─ MCP ChromeDevTools list_pages 有 creator.xiaohongshu.com tab？
     └─ FAIL → 手动在 MCP Chrome 打开对应页面并登录，不许进 Phase 3
 
+  Gate 2.2 抖音 Cookie (max 3 retries)
+    ├─ douyin_account.json 存在？
+    ├─ python scripts/publish_douyin.py --account douyin_account.json --validate 通过？
+    └─ FAIL → python scripts/publish_douyin.py --login --account douyin_account.json
+
 Phase 3: 发布
   Gate 3.1 小绿书 (max 3 retries)
     ├─ 图片上传完成？（mmbiz.qpic.cn 背景图 unique URLs ≈ 预期）
@@ -80,9 +89,15 @@ Phase 3: 发布
     ├─ _onSave() 返回 truthy？
     └─ FAIL → 修对应步骤，PASS 后进 Gate 3.3
 
-  Gate 3.3 完成报告
+  Gate 3.3 抖音 (max 3 retries)
+    ├─ publish_douyin.py 返回 success？
+    ├─ 草稿箱可见？
+    └─ FAIL → 检查错误信息，修对应步骤
+
+  Gate 3.4 完成报告
     ├─ 小绿书草稿 ID：___
     ├─ 小红书草稿已保存
+    ├─ 抖音草稿已保存
     └─ 输出：=== 矩阵发布完成 | {日期} ===
 ```
 
@@ -299,6 +314,71 @@ async () => {
 
 ---
 
+### Gate 3.3: 抖音图文发布（Playwright 脚本）
+
+抖音采用独立 Python 脚本，基于 Playwright 浏览器自动化（参考 dreammis/social-auto-upload 的 DouYinNote 实现）。**不用 MCP ChromeDevTools**——抖音需要 QR 扫码登录 + `set_input_files` 直接传文件。
+
+**Step 1: 扫码登录（首次）**
+
+```bash
+python scripts/publish_douyin.py --login --account douyin_account.json
+```
+
+浏览器弹出抖音创作者登录页 → 用抖音 APP 扫码 → cookie 保存到 `douyin_account.json`。
+
+**Step 2: 验证 cookie 有效**
+
+```bash
+python scripts/publish_douyin.py --account douyin_account.json --validate
+# 输出: ✅ Cookie 有效 或 ⚠️ Cookie 无效
+```
+
+**Step 3: 发布图文**
+
+```bash
+python scripts/publish_douyin.py \
+    --account douyin_account.json \
+    --title "缺的不是答案，是角度" \
+    --note "Karpathy说：没卡就别动，你修的是跑分，不是用户的感觉..." \
+    --tags AI工具 思维模型 决策辅助 \
+    --images 小绿书/card_1.png 小绿书/card_2.png 小绿书/card_3.png
+```
+
+脚本内部流程：
+1. 导航到 `creator.douyin.com/creator-micro/content/upload`
+2. 点击「发布图文」切到图文模式
+3. `set_input_files()` 一次性上传全部图片
+4. 等 URL 跳转到 `post/image` 页
+5. 填标题（`input[type="text"]`） + 描述（`.zone-container[contenteditable="true"]`）
+6. 标签以 `#tag` 形式追加到描述末尾
+7. 点击「发布」按钮 → 等 URL 跳转到 `manage?enter_from=publish`
+8. 自动保存更新后的 cookie
+
+**DOM 架构**
+```
+creator.douyin.com/creator-micro/content/upload
+  ├─ Tab: "发布视频" / "发布图文"  ← 点击 "发布图文"
+  ├─ 图片上传: div[class^='container'] input[accept*='image']
+  ├─ 标题: input[type="text"]（限制 30 字）
+  ├─ 描述: .zone-container[contenteditable="true"]
+  ├─ 定时发布: [class^='radio']:has-text('定时发布')
+  └─ 发布按钮: button "发布"
+```
+
+**关键差异 vs 小绿书/小红书**
+
+| 维度 | 抖音 |
+|------|------|
+| 编辑器框架 | Semi Design (抖音自研) |
+| 登录方式 | QR 扫码 → storage_state JSON |
+| 图片上传 | Playwright `set_input_files` 直接传本地文件 |
+| 标题限制 | 30 字（非 20 字） |
+| 换行方式 | 自然输入，`\n` 换行 |
+| 保存/发布 | 直接「发布」（非草稿），发布后跳 `manage?enter_from=publish` |
+| 驱动方式 | **Python Playwright**（非 MCP ChromeDevTools） |
+
+---
+
 ## CDP Python 直连方案（备用）
 
 **适用场景**：Chrome 9222 端口有已登录的 小绿书 tab（即 9222 Chrome 和 MCP Chrome 是同一个实例时）。
@@ -411,16 +491,18 @@ pub.ws.close()
 
 ## 平台差异速查
 
-| 维度 | 小绿书 | 小红书 |
-|------|--------|--------|
-| 编辑器框架 | Vue 3 + ProseMirror + UEditor | TipTap (ProseMirror) |
-| 标题元素 | `#title` TEXTAREA + `__mpTitleEditor` Vue | `div.d-input input` |
-| 标题填法 | `setContent()` + `.value` + `input` 事件（双保险） | `.value` + `input` 事件 |
-| 描述/正文元素 | `.share-text__input .ProseMirror` (ProseMirror[1]) | `.tiptap.ProseMirror` |
-| 换行方式 | `<br>` innerHTML（`<p>` 保存被剥离） | `<p>` 元素 appendChild（`\n` 不换行） |
-| 图片上传 | input[type=file] **`[1]`** | input[type=file] `[0]` |
-| 保存方式 | `#js_submit.click()` | `xhs-publish-btn._onSave()` |
-| 保存确认 | URL 含 `appmsgid=` | `_onSave()` 返回 truthy |
+| 维度 | 小绿书 | 小红书 | 抖音 |
+|------|--------|--------|------|
+| 编辑器框架 | Vue 3 + ProseMirror + UEditor | TipTap (ProseMirror) | Semi Design |
+| 标题元素 | `#title` TEXTAREA + `__mpTitleEditor` Vue | `div.d-input input` | `input[type="text"]` |
+| 标题填法 | `setContent()` + `.value` + `input` 事件（双保险） | `.value` + `input` 事件 | `fill()` 直接填入 |
+| 描述/正文元素 | `.share-text__input .ProseMirror` (ProseMirror[1]) | `.tiptap.ProseMirror` | `.zone-container[contenteditable="true"]` |
+| 换行方式 | `<br>` innerHTML（`<p>` 保存被剥离） | `<p>` 元素 appendChild（`\n` 不换行） | `type()` 自然输入，`\n` 换行 |
+| 图片上传 | input[type=file] **`[1]`** | input[type=file] `[0]` | `set_input_files()` 直接传本地路径 |
+| 保存方式 | `#js_submit.click()` | `xhs-publish-btn._onSave()` | `button "发布"` 直接发布 |
+| 保存确认 | URL 含 `appmsgid=` | `_onSave()` 返回 truthy | URL 跳转 `manage?enter_from=publish` |
+| 驱动方式 | MCP ChromeDevTools | MCP ChromeDevTools | **Python Playwright** |
+| 标题字数限制 | 20 字 | 20 字 | 30 字 |
 
 ---
 
@@ -441,18 +523,27 @@ pub.ws.close()
 | 小红书换行消失 | 用了 `textContent` + `\n` → 必须 split 创建 `<p>` 元素（与 小绿书 `<br>` 相反！）|
 | 小红书图片不显示 | MCP 逐张上传竞态 → 用 fetch + DataTransfer 一次性传 |
 | 本地 HTTP 服务器占用 | `taskkill //PID <pid> //F` |
+| 抖音 cookie 失效 | 运行 `python scripts/publish_douyin.py --login --account douyin_account.json` 重新扫码 |
+| 抖音「发布图文」找不到 | UI 改版 → 检查页面是否加载完成，查看 console 错误 |
+| 抖音图片上传超时 | 图片太大或网络慢 → 先 compress 到 2MB 以下 |
+| 抖音标题被截断 | 标题限 30 字，`fill_title_and_description` 内自动截断 |
+| 抖音发布按钮无反应 | 可能有未填的必填字段（地理位置、购物车链接等）→ 检查页面有无错误提示 |
 
 ## 诚实边界
 
 - **小绿书"发表"无确认弹窗**：只保存草稿（`#js_submit`），不发"发布"
 - **小红书 _onPublish() 无确认**：慎用，默认只用 `_onSave()` 保存草稿
+- **抖音是直接发布**（非草稿）：点击「发布」后直接提交审核，无二次确认
 - **小绿书架构**：Vue 3 + ProseMirror + UEditor。ProseMirror[0]=标题, [1]=描述源, [2]=正文。`#js_description` 是镜像。保存按钮是 `<span id="js_submit">`
-- **外部依赖**：小红书 CDP Python 方案依赖 `D:\Openclaw\skills\redbook-skills\scripts\cdp_publish.py`；MCP 方案无外部依赖
-- **登录态 2h 过期**：长时间任务可能掉登录
-- **Chrome 实例差异**（2026-05-19）：MCP Chrome 和 9222 Chrome 是不同实例。MCP 方案优先
-- **信息截止 2026-05-19**：平台 UI 可能变化
+- **外部依赖**：小红书 CDP Python 方案依赖 `D:\Openclaw\skills\redbook-skills\scripts\cdp_publish.py`；MCP 方案无外部依赖。抖音依赖 Playwright + Chrome
+- **登录态 2h 过期**：长时间任务可能掉登录。抖音 cookie 也需周期性刷新
+- **Chrome 实例差异**（2026-05-19）：MCP Chrome 和 9222 Chrome 是不同实例。MCP 方案优先。抖音用独立 Playwright 实例，不与 MCP Chrome 冲突
+- **抖音 UI 选择器基于 social-auto-upload 验证**：`input[type="text"]`、`.zone-container[contenteditable="true"]`、`button "发布"` 基于 2026-05 版本，如 UI 改版需更新
+- **信息截止 2026-05-24**：平台 UI 可能变化
 
 ## 参考
 
 - `references/xiaolvshu-workflow.md` — 小绿书技术细节
+- `references/xhs-workflow.md` — 小红书技术细节
 - `tips/matrix-publishing-pitfalls.md` — 踩坑记录
+- [social-auto-upload](https://github.com/dreammis/social-auto-upload) — 抖音 Playwright 方案参考（DouYinNote 类）

@@ -3,5 +3,8 @@
 # 小绿书 CDP 直连（websockets 库，非 websocket）
 websockets>=12.0
 
+# 抖音图文发布（Playwright 浏览器自动化）
+playwright>=1.45
+
 # 小红书 CDP 发布（依赖外部 redbook-skills，见 SKILL.md 诚实边界）
 # redbook-skills 路径：D:\Openclaw\skills\redbook-skills\scripts\
