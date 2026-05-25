@@ -29,6 +29,10 @@ import json
 import os
 import sys
 import re
+
+# Windows 终端 GBK 编码无法输出 emoji，强制 UTF-8
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -59,7 +63,7 @@ async def _qrcode_login(account_file: str, headless: bool = False) -> bool:
     print("\n📱 正在打开抖音创作者登录页...")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=headless, channel="chrome")
+        browser = await p.chromium.launch(headless=headless, channel=None)
         context = await browser.new_context(
             viewport={"width": 1280, "height": 800},
             permissions=["geolocation"],
@@ -116,7 +120,7 @@ async def cookie_auth(account_file: str) -> bool:
         return False
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, channel="chrome")
+        browser = await p.chromium.launch(headless=True, channel=None)
         context = await browser.new_context(storage_state=account_file)
         page = await context.new_page()
 
@@ -201,7 +205,7 @@ async def upload_note(
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=headless,
-            channel="chrome",
+            channel=None,
         )
         context = await browser.new_context(
             storage_state=account_file,
@@ -288,25 +292,76 @@ async def upload_note(
             await browser.close()
 
 
+async def _dismiss_dialogs(page):
+    """关闭页面上可能存在的弹窗（如「共创中心」公告弹窗）"""
+    selectors = [
+        'button:has-text("我知道了")',
+        'button:has-text("关闭")',
+        '[role="dialog"] button:has-text("确定")',
+        '.semi-modal button:has-text("确定")',
+    ]
+    for sel in selectors:
+        try:
+            btn = page.locator(sel)
+            if await btn.count() > 0 and await btn.first.is_visible():
+                await btn.first.click()
+                await page.wait_for_timeout(500)
+                print(f"  ✅ 关闭弹窗: {sel}")
+        except Exception:
+            pass
+
+
 async def _click_publish_with_retry(page, max_retries: int = 3) -> dict:
-    """点击发布按钮并等待跳转，支持重试"""
+    """点击发布按钮并等待跳转，支持重试。弹窗在点击后出现，需点击后立即轮询关闭。"""
     last_error = None
     for attempt in range(max_retries):
         if attempt > 0:
             print(f"  🔄 重试发布 ({attempt + 1}/{max_retries})...")
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(2000)
 
         try:
+            # Fresh reference every attempt
             publish_btn = page.get_by_role("button", name="发布", exact=True)
             await publish_btn.click()
-            await page.wait_for_url(MANAGE_URL_PATTERN, timeout=30_000)
+
+            # 点击后轮询弹窗，支持多轮弹窗
+            for dialog_round in range(5):  # 最多处理 5 轮弹窗
+                await page.wait_for_timeout(800)
+                dismissed = False
+                for sel in [
+                    'button:has-text("我知道了")',
+                    'button:has-text("关闭")',
+                    '[role="dialog"] button:has-text("确定")',
+                    '.semi-modal button:has-text("确定")',
+                    '.semi-modal button:has-text("确认")',
+                    'button:has-text("确认发布")',
+                ]:
+                    try:
+                        btn = page.locator(sel)
+                        if await btn.count() > 0 and await btn.first.is_visible():
+                            await btn.first.click()
+                            await page.wait_for_timeout(500)
+                            print(f"  ✅ 关闭弹窗: {sel}")
+                            dismissed = True
+                            break
+                    except Exception:
+                        pass
+                if dismissed:
+                    # 弹窗关闭后，用小延迟再点发布（用 fresh reference）
+                    await page.wait_for_timeout(800)
+                    fresh_btn = page.get_by_role("button", name="发布", exact=True)
+                    await fresh_btn.click()
+                    continue  # 继续检查下一轮弹窗
+                else:
+                    break  # 没有弹窗了，发布应该在进行中
+
+            await page.wait_for_url(MANAGE_URL_PATTERN, timeout=60_000)
             return {
                 "success": True,
                 "url": page.url,
             }
         except PlaywrightTimeout:
             last_error = "发布超时，URL 未跳转到管理页"
-            # 检查错误提示
             error_text = page.locator('text=发布失败, text=参数错误, text=内容违规')
             if await error_text.count() > 0:
                 msg = await error_text.first.text_content()

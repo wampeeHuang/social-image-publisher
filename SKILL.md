@@ -8,24 +8,22 @@ description: >
 
 # 矩阵图文发布
 
-> 一篇内容，三个平台。小绿书+小红书用 MCP ChromeDevTools，抖音用 Playwright 脚本。PNG 由 evolution-cat-infographic 生产。
+> 一篇内容，三个平台。全部使用 MCP ChromeDevTools 手动发布（已验证最可靠）。抖音 Playwright 脚本作为备用方案。
 
 ## 前置检查
 
 ```bash
-# 1. MCP ChromeDevTools 已连接（list_pages 能看到两个 tab）
+# 1. MCP ChromeDevTools 已连接（list_pages 能看到三个 tab）
 #    - mp.weixin.qq.com tab（小绿书，已登录）
 #    - creator.xiaohongshu.com tab（小红书，已登录）
+#    - creator.douyin.com tab（抖音，已登录）
 
-# 2. 抖音：Playwright cookie 文件已生成
-ls douyin_account.json
-
-# 3. 图片 ≥2 张 PNG
+# 2. 图片 ≥2 张 PNG
 ls 小绿书/card_*.png | wc -l
 ```
 
 MCP Chrome 没有对应 tab → 手动在 MCP Chrome 中打开并登录。
-抖音 cookie 未生成 → `python scripts/publish_douyin.py --login --account douyin_account.json`
+抖音登录：在 MCP Chrome 中打开 `creator.douyin.com`，扫码登录后即可使用（无需额外 cookie 文件）。
 
 ---
 
@@ -66,12 +64,12 @@ Phase 2: 环境
   Gate 2.1 MCP Chrome (max 3 retries)
     ├─ MCP ChromeDevTools list_pages 有 mp.weixin.qq.com tab？
     ├─ MCP ChromeDevTools list_pages 有 creator.xiaohongshu.com tab？
+    ├─ MCP ChromeDevTools list_pages 有 creator.douyin.com tab？
     └─ FAIL → 手动在 MCP Chrome 打开对应页面并登录，不许进 Phase 3
 
-  Gate 2.2 抖音 Cookie (max 3 retries)
-    ├─ douyin_account.json 存在？
-    ├─ python scripts/publish_douyin.py --account douyin_account.json --validate 通过？
-    └─ FAIL → python scripts/publish_douyin.py --login --account douyin_account.json
+  Gate 2.2 图片服务器 (max 3 retries)
+    ├─ http://127.0.0.1:8888 可访问？
+    └─ FAIL → 启动本地 CORS HTTP 服务器
 
 Phase 3: 发布
   Gate 3.1 小绿书 (max 3 retries)
@@ -90,8 +88,10 @@ Phase 3: 发布
     └─ FAIL → 修对应步骤，PASS 后进 Gate 3.3
 
   Gate 3.3 抖音 (max 3 retries)
-    ├─ publish_douyin.py 返回 success？
-    ├─ 草稿箱可见？
+    ├─ 图片上传完成？
+    ├─ 标题已填？（input[type="text"] value = 预期，≤20字）
+    ├─ 描述已填？（.zone-container textContent > 0）
+    ├─ URL 跳转到 manage?enter_from=publish？（发布成功）
     └─ FAIL → 检查错误信息，修对应步骤
 
   Gate 3.4 完成报告
@@ -314,55 +314,110 @@ async () => {
 
 ---
 
-### Gate 3.3: 抖音图文发布（Playwright 脚本）
+### Gate 3.3: 抖音完整流程（MCP ChromeDevTools）
 
-抖音采用独立 Python 脚本，基于 Playwright 浏览器自动化（参考 dreammis/social-auto-upload 的 DouYinNote 实现）。**不用 MCP ChromeDevTools**——抖音需要 QR 扫码登录 + `set_input_files` 直接传文件。
+**Step 1: 切换到抖音 tab**
 
-**Step 1: 扫码登录（首次）**
+`select_page` → pageId 为抖音 tab。
 
-```bash
-python scripts/publish_douyin.py --login --account douyin_account.json
+**Step 2: 导航到上传页**
+
+```javascript
+// 用 navigate_page 导航到上传页
+// URL: https://creator.douyin.com/creator-micro/content/upload
 ```
 
-浏览器弹出抖音创作者登录页 → 用抖音 APP 扫码 → cookie 保存到 `douyin_account.json`。
+等 5 秒让页面加载。验证编辑器就绪：
 
-**Step 2: 验证 cookie 有效**
-
-```bash
-python scripts/publish_douyin.py --account douyin_account.json --validate
-# 输出: ✅ Cookie 有效 或 ⚠️ Cookie 无效
+```javascript
+() => ({
+    url: window.location.href,
+    hasFileInput: document.querySelectorAll('input[type=file]').length,
+    hasPublishTab: !!document.querySelector('text=发布图文')
+})
 ```
 
-**Step 3: 发布图文**
+**Step 3: 切换到图文模式**
 
-```bash
-python scripts/publish_douyin.py \
-    --account douyin_account.json \
-    --title "缺的不是答案，是角度" \
-    --note "Karpathy说：没卡就别动，你修的是跑分，不是用户的感觉..." \
-    --tags AI工具 思维模型 决策辅助 \
-    --images 小绿书/card_1.png 小绿书/card_2.png 小绿书/card_3.png
+用 `take_snapshot` 找到「发布图文」→ `click` 切到图文模式。等 1 秒。
+
+**Step 4: 上传图片**
+
+fetch + DataTransfer（同小绿书/小红书）。抖音有 2 个 file input：`[0]`=视频、`[1]`=图片。用 `[1]`：
+
+```javascript
+async () => {
+    const files = ['card_1.png', 'card_2.png', 'card_3.png'];
+    const dt = new DataTransfer();
+    for (const f of files) {
+        const resp = await fetch('http://127.0.0.1:8888/' + f);
+        const blob = await resp.blob();
+        dt.items.add(new File([blob], f, {type: 'image/png'}));
+    }
+    const input = document.querySelectorAll('input[type=file]')[1]; // [0]=视频, [1]=图片
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', {bubbles: true}));
+    return {uploaded: dt.files.length};
+}
 ```
 
-脚本内部流程：
-1. 导航到 `creator.douyin.com/creator-micro/content/upload`
-2. 点击「发布图文」切到图文模式
-3. `set_input_files()` 一次性上传全部图片
-4. 等 URL 跳转到 `post/image` 页
-5. 填标题（`input[type="text"]`） + 描述（`.zone-container[contenteditable="true"]`）
-6. 标签以 `#tag` 形式追加到描述末尾
-7. 点击「发布」按钮 → 等 URL 跳转到 `manage?enter_from=publish`
-8. 自动保存更新后的 cookie
+等 10-15 秒，等待 URL 自动跳转到 `/post/image`：
 
-**DOM 架构**
+```javascript
+() => window.location.href
+// 期望: 含 "post/image"
 ```
-creator.douyin.com/creator-micro/content/upload
-  ├─ Tab: "发布视频" / "发布图文"  ← 点击 "发布图文"
-  ├─ 图片上传: div[class^='container'] input[accept*='image']
-  ├─ 标题: input[type="text"]（限制 30 字）
-  ├─ 描述: .zone-container[contenteditable="true"]
-  ├─ 定时发布: [class^='radio']:has-text('定时发布')
-  └─ 发布按钮: button "发布"
+
+**Step 5: 填标题**
+
+```javascript
+() => {
+    const el = document.querySelector('input[type="text"]');
+    if (!el) return {error: 'no title input'};
+    el.value = '你的标题（≤20字）';
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+    return {value: el.value};
+}
+```
+
+**Step 6: 填描述**
+
+```javascript
+() => {
+    const el = document.querySelector('.zone-container[contenteditable="true"]');
+    if (!el) return {error: 'no contenteditable zone'};
+    el.focus();
+    el.textContent = '描述内容\n\n用 \\n 换行\n\n#hashtag';
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+    return {textLen: el.textContent.length};
+}
+```
+
+**Step 7: 发布**
+
+用 `take_snapshot` 找到「发布」按钮 → `click`。
+
+抖音会弹出确认弹窗（如「共创中心」公告）→ 处理弹窗后再点发布：
+
+```javascript
+// 弹窗处理：检查并关闭
+() => {
+    const btns = document.querySelectorAll('button');
+    const dismiss = Array.from(btns).find(b =>
+        b.textContent.includes('我知道了') ||
+        b.textContent.includes('关闭') ||
+        b.textContent.includes('确定')
+    );
+    if (dismiss) { dismiss.click(); return 'dismissed'; }
+    return 'no dialog';
+}
+```
+
+发布成功后 URL 跳转到 `manage?enter_from=publish`：
+
+```javascript
+() => window.location.href
+// 期望: 含 "manage?enter_from=publish" → 发布成功，状态 "审核中"
 ```
 
 **关键差异 vs 小绿书/小红书**
@@ -370,12 +425,30 @@ creator.douyin.com/creator-micro/content/upload
 | 维度 | 抖音 |
 |------|------|
 | 编辑器框架 | Semi Design (抖音自研) |
-| 登录方式 | QR 扫码 → storage_state JSON |
-| 图片上传 | Playwright `set_input_files` 直接传本地文件 |
-| 标题限制 | 30 字（非 20 字） |
-| 换行方式 | 自然输入，`\n` 换行 |
-| 保存/发布 | 直接「发布」（非草稿），发布后跳 `manage?enter_from=publish` |
-| 驱动方式 | **Python Playwright**（非 MCP ChromeDevTools） |
+| 登录方式 | MCP Chrome 直接扫码登录 |
+| 图片上传 | fetch + DataTransfer，file input **`[1]`**（`[0]`=视频） |
+| 标题限制 | 20 字（当前 UI） |
+| 换行方式 | `textContent` + `\n` 换行 |
+| 保存/发布 | 直接「发布」（非草稿），发布后跳 `manage?enter_from=publish`。**发布按钮在微前端/React Portal 内，MCP click uid 超时 → 需人工点击** |
+| 弹窗处理 | 发布后需关闭「共创中心」等弹窗，再点发布 |
+| 驱动方式 | **MCP ChromeDevTools**（主流程） |
+
+**备用方案：Playwright 脚本**
+
+MCP ChromeDevTools 不可用时，可用 Playwright 脚本作为备用：
+
+```bash
+# 登录
+python scripts/publish_douyin.py --login --account douyin_account.json
+
+# 发布
+python scripts/publish_douyin.py \
+    --account douyin_account.json \
+    --title "标题" --note "正文" \
+    --images card_1.png card_2.png card_3.png
+```
+
+⚠️ Playwright 方案已知不稳定——`_click_publish_with_retry` 经常超时。优先用 MCP ChromeDevTools。
 
 ---
 
@@ -495,14 +568,14 @@ pub.ws.close()
 |------|--------|--------|------|
 | 编辑器框架 | Vue 3 + ProseMirror + UEditor | TipTap (ProseMirror) | Semi Design |
 | 标题元素 | `#title` TEXTAREA + `__mpTitleEditor` Vue | `div.d-input input` | `input[type="text"]` |
-| 标题填法 | `setContent()` + `.value` + `input` 事件（双保险） | `.value` + `input` 事件 | `fill()` 直接填入 |
+| 标题填法 | `setContent()` + `.value` + `input` 事件（双保险） | `.value` + `input` 事件 | `.value` + `input` 事件 |
 | 描述/正文元素 | `.share-text__input .ProseMirror` (ProseMirror[1]) | `.tiptap.ProseMirror` | `.zone-container[contenteditable="true"]` |
-| 换行方式 | `<br>` innerHTML（`<p>` 保存被剥离） | `<p>` 元素 appendChild（`\n` 不换行） | `type()` 自然输入，`\n` 换行 |
-| 图片上传 | input[type=file] **`[1]`** | input[type=file] `[0]` | `set_input_files()` 直接传本地路径 |
-| 保存方式 | `#js_submit.click()` | `xhs-publish-btn._onSave()` | `button "发布"` 直接发布 |
+| 换行方式 | `<br>` innerHTML（`<p>` 保存被剥离） | `<p>` 元素 appendChild（`\n` 不换行） | `\n` 换行（textContent 赋值） |
+| 图片上传 | input[type=file] **`[1]`** | input[type=file] `[0]` | input[type=file] **`[1]`**（`[0]`=视频） |
+| 保存方式 | `#js_submit.click()` | `xhs-publish-btn._onSave()` | `button "发布"` 直接发布（需处理弹窗） |
 | 保存确认 | URL 含 `appmsgid=` | `_onSave()` 返回 truthy | URL 跳转 `manage?enter_from=publish` |
-| 驱动方式 | MCP ChromeDevTools | MCP ChromeDevTools | **Python Playwright** |
-| 标题字数限制 | 20 字 | 20 字 | 30 字 |
+| 驱动方式 | MCP ChromeDevTools | MCP ChromeDevTools | **MCP ChromeDevTools**（主流程） |
+| 标题字数限制 | 20 字 | 20 字 | 20 字 |
 
 ---
 
@@ -523,11 +596,16 @@ pub.ws.close()
 | 小红书换行消失 | 用了 `textContent` + `\n` → 必须 split 创建 `<p>` 元素（与 小绿书 `<br>` 相反！）|
 | 小红书图片不显示 | MCP 逐张上传竞态 → 用 fetch + DataTransfer 一次性传 |
 | 本地 HTTP 服务器占用 | `taskkill //PID <pid> //F` |
-| 抖音 cookie 失效 | 运行 `python scripts/publish_douyin.py --login --account douyin_account.json` 重新扫码 |
+| 抖音 URL 未跳转 post/image | 图片上传未触发 → 确认 fetch + DataTransfer 执行成功，等 15 秒后重试 |
+| 抖音发布按钮无反应 | 弹窗遮挡 → 先关闭「共创中心」等弹窗，再点发布。可能需要多轮弹窗处理 |
 | 抖音「发布图文」找不到 | UI 改版 → 检查页面是否加载完成，查看 console 错误 |
-| 抖音图片上传超时 | 图片太大或网络慢 → 先 compress 到 2MB 以下 |
-| 抖音标题被截断 | 标题限 30 字，`fill_title_and_description` 内自动截断 |
-| 抖音发布按钮无反应 | 可能有未填的必填字段（地理位置、购物车链接等）→ 检查页面有无错误提示 |
+| 抖音 标题 ≤ 20 字 | 当前 UI 标题输入框限制 20 字（非 Playwright 脚本假设的 30 字） |
+| 抖音 Playwright 发布超时 | Playwright `_click_publish_with_retry` 已知不稳定 → 换 MCP ChromeDevTools 流程 |
+| 抖音 file input `[0]` 不触发图文上传 | `[0]` 是视频 input → 用 `[1]`（图片 input） |
+| 抖音发布按钮 MCP click uid 超时 | 按钮在微前端/React Portal 内，`document.querySelector` 不可达 → **需人工点击发布** |
+| 抖音 cookie 失效 (Playwright 备用) | 运行 `python scripts/publish_douyin.py --login --account douyin_account.json` 重新扫码 |
+| CORS 服务器脚本丢失（重启后 `/tmp` 清空） | 脚本应固化到 SKILL 目录或项目目录，不依赖 `/tmp` |
+| 小绿书 `appmsg_edit_v2` URL 编辑器 Vue 不挂载 | 用 `appmsg_edit` + `createType=8`，不用 `appmsg_edit_v2` |
 
 ## 诚实边界
 
@@ -535,15 +613,21 @@ pub.ws.close()
 - **小红书 _onPublish() 无确认**：慎用，默认只用 `_onSave()` 保存草稿
 - **抖音是直接发布**（非草稿）：点击「发布」后直接提交审核，无二次确认
 - **小绿书架构**：Vue 3 + ProseMirror + UEditor。ProseMirror[0]=标题, [1]=描述源, [2]=正文。`#js_description` 是镜像。保存按钮是 `<span id="js_submit">`
-- **外部依赖**：小红书 CDP Python 方案依赖 `D:\Openclaw\skills\redbook-skills\scripts\cdp_publish.py`；MCP 方案无外部依赖。抖音依赖 Playwright + Chrome
-- **登录态 2h 过期**：长时间任务可能掉登录。抖音 cookie 也需周期性刷新
-- **Chrome 实例差异**（2026-05-19）：MCP Chrome 和 9222 Chrome 是不同实例。MCP 方案优先。抖音用独立 Playwright 实例，不与 MCP Chrome 冲突
-- **抖音 UI 选择器基于 social-auto-upload 验证**：`input[type="text"]`、`.zone-container[contenteditable="true"]`、`button "发布"` 基于 2026-05 版本，如 UI 改版需更新
+- **外部依赖**：小红书 CDP Python 方案依赖 `D:\Openclaw\skills\redbook-skills\scripts\cdp_publish.py`；MCP 方案无外部依赖。抖音 MCP 方案无外部依赖；Playwright 备用方案依赖 Playwright + Chrome
+- **登录态 2h 过期**：长时间任务可能掉登录。三个平台均需周期性重登
+- **Chrome 实例差异**（2026-05-19）：MCP Chrome 和 9222 Chrome 是不同实例。MCP 方案优先
+- **抖音 MCP ChromeDevTools 流程已验证**（2026-05-24）：fetch + DataTransfer 上传 → URL 跳转 `post/image` → 填标题描述 → 点发布（处理弹窗）→ URL 跳转 `manage?enter_from=publish` 成功。Playwright 脚本保留作为备用
+- **抖音发布按钮 MCP 不可达**（2026-05-25 复盘）：发布按钮在抖音微前端/React Portal 内，`document.querySelectorAll('button')` 不可达，`click` uid 超时。当前需人工点击发布
+- **抖音 file input 索引修正**（2026-05-25 复盘）：抖音有 2 个 file input，`[0]`=视频、`[1]`=图片。SKILL 已更新为 `[1]`
+- **CORS 服务器持久化**（2026-05-25 复盘）：`/tmp` 脚本重启后丢失。CORS 脚本应固化到项目目录或 SKILL 目录
+- **小绿书 URL 格式**（2026-05-25 复盘）：`appmsg_edit` + `createType=8` 正确；`appmsg_edit_v2` 编辑器 Vue 不挂载，已排除
+- **抖音 UI 选择器**：`input[type="text"]`、`.zone-container[contenteditable="true"]`、`button "发布"` 基于 2026-05 版本，如 UI 改版需更新
 - **信息截止 2026-05-24**：平台 UI 可能变化
+- **结构图同步**：修改本 SKILL.md 后必须同步更新 `references/system-diagram.html`。图落后于源 = 图失去可信度。检查：`ls -la references/system-diagram.html` 确认修改时间 ≥ SKILL.md
 
 ## 参考
 
 - `references/xiaolvshu-workflow.md` — 小绿书技术细节
 - `references/xhs-workflow.md` — 小红书技术细节
 - `tips/matrix-publishing-pitfalls.md` — 踩坑记录
-- [social-auto-upload](https://github.com/dreammis/social-auto-upload) — 抖音 Playwright 方案参考（DouYinNote 类）
+- [social-auto-upload](https://github.com/dreammis/social-auto-upload) — 抖音 Playwright 方案参考（DouYinNote 类，MCP ChromeDevTools 为主流程后作为备用）

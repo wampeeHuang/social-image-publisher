@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>social-image-publisher · 系统结构图</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#FAFAF8; --paper-rgb:250,250,248;
+    --ink:#0A0A0A; --ink-rgb:10,10,10;
+    --grey-0:#F2F2F0; --grey-1:#E8E8E4; --grey-2:#CFCFCB; --grey-3:#737373;
+    --accent:#002FA7; --accent-rgb:0,47,167; --accent-on:#FFFFFF;
+    --accent-light:rgba(0,47,167,.06); --accent-mid:rgba(0,47,167,.12);
+    --accent-strong:rgba(0,47,167,.18);
+    --kill:#CC3333; --kill-rgb:204,51,51; --kill-light:rgba(204,51,51,.06);
+    --warn:#B8860B; --warn-light:rgba(184,134,11,.07);
+    --sans:"Inter","Helvetica Neue","Helvetica","Arial","Segoe UI",system-ui,-apple-system,sans-serif;
+    --sans-zh:"Noto Sans SC","PingFang SC","Microsoft YaHei UI","Microsoft YaHei","微软雅黑",sans-serif;
+    --mono:"JetBrains Mono","IBM Plex Mono","SF Mono","Cascadia Code","Consolas",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--paper);color:var(--ink);font-family:var(--sans),var(--sans-zh);-webkit-font-smoothing:antialiased}
+  body{max-width:1800px;margin:0 auto;padding:40px 48px 60px}
+
+  .hero{background:var(--accent);color:var(--accent-on);padding:52px 56px;margin-bottom:36px;display:grid;grid-template-columns:1fr auto;gap:40px;align-items:end}
+  .hero .kicker{font-family:var(--mono);font-size:14px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.55);margin-bottom:8px}
+  .hero h1{font-size:clamp(48px,5.5vw,76px);font-weight:200;letter-spacing:-.02em;line-height:1.02;color:var(--accent-on)}
+  .hero .deck{font-size:17px;font-weight:400;color:rgba(255,255,255,.65);margin-top:12px;max-width:650px;line-height:1.6}
+  .hero .kpi-strip{display:flex;gap:48px;align-self:end}
+  .hero .kpi-strip .kv{font-family:var(--mono);font-size:60px;font-weight:300;color:var(--accent-on);line-height:1;letter-spacing:-.03em}
+  .hero .kpi-strip .kl{font-size:13px;color:rgba(255,255,255,.5);margin-top:4px;text-transform:uppercase;letter-spacing:.08em}
+
+  .main-grid{display:grid;grid-template-columns:1fr 360px;gap:36px;margin-bottom:36px}
+
+  .panel{background:var(--grey-0);padding:24px;border-left:1px solid var(--accent)}
+  .panel.clean{background:var(--paper);border-left:none}
+  .panel-head{font-family:var(--mono);font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-bottom:18px;padding-bottom:8px;border-bottom:1px solid var(--accent)}
+
+  .pipeline{position:relative}
+  .step{margin-bottom:0;position:relative}
+  .step-inner{display:grid;grid-template-columns:72px 1fr 130px;gap:18px;align-items:start;padding:12px 0}
+  .step:last-child .step-inner{padding-bottom:0}
+
+  .step-num{width:72px;height:72px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:26px;font-weight:500;color:var(--accent);border:1px solid var(--accent);background:var(--accent-light);flex-shrink:0}
+  .step-num.pause{color:var(--warn);border-color:var(--warn);background:var(--warn-light)}
+
+  .step-body h3{font-size:17px;font-weight:700;color:var(--ink);margin-bottom:2px}
+  .step-body .role{font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:600;margin-bottom:4px}
+  .step-body .desc{font-size:14px;color:var(--grey-3);line-height:1.5;font-weight:400}
+
+  .gate-break{background:var(--kill-light);border-left:1px solid var(--kill);padding:14px 18px;margin:6px 0 6px 90px}
+  .gate-break .gtag{display:inline-block;font-family:var(--mono);font-size:12px;font-weight:700;color:var(--kill);background:rgba(204,51,51,.1);padding:3px 10px;margin-bottom:6px;letter-spacing:.06em}
+  .gate-break .gtitle{font-size:14px;font-weight:700;color:var(--ink)}
+  .gate-break .gdetail{font-size:13px;color:var(--grey-3);margin-top:3px;line-height:1.5}
+  .gate-break .gitems{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+  .gate-break .gi{font-family:var(--mono);font-size:12px;color:var(--kill);font-weight:600}
+
+  .gate-break.eng{background:var(--accent-light);border-left-color:var(--accent)}
+  .gate-break.eng .gtag{color:var(--accent);background:var(--accent-mid)}
+  .gate-break.eng .gi{color:var(--accent)}
+
+  .gate-break.warn{background:var(--warn-light);border-left-color:var(--warn)}
+  .gate-break.warn .gtag{color:var(--warn);background:rgba(184,134,11,.12)}
+  .gate-break.warn .gi{color:var(--warn)}
+
+  .pause-marker{margin:4px 0 4px 90px;padding:8px 14px;border-left:1px solid var(--warn);background:var(--warn-light)}
+  .pause-marker .plabel{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--warn);letter-spacing:.06em}
+  .pause-marker .ptext{font-size:12px;color:var(--grey-3);margin-top:2px}
+
+  .side-stack{display:flex;flex-direction:column;gap:20px}
+
+  .tt{width:100%;border-collapse:collapse;font-size:12px}
+  .tt th{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);text-align:left;padding:6px 8px;border-bottom:1px solid var(--accent);letter-spacing:.06em;text-transform:uppercase}
+  .tt td{padding:6px 8px;border-bottom:1px solid var(--grey-1);vertical-align:top;line-height:1.45}
+  .tt .tnum{font-family:var(--mono);font-weight:700;color:var(--kill);white-space:nowrap}
+  .tt .tban{font-weight:700;color:var(--ink)}
+  .tt .treason{font-size:11px;color:var(--grey-3)}
+
+  .folder-tree{font-family:var(--mono);font-size:13px;line-height:2.1;color:var(--ink)}
+  .folder-tree .dir{color:var(--accent);font-weight:600}
+  .folder-tree .file{color:var(--grey-3)}
+  .folder-tree .comment{color:var(--grey-2);font-size:11px}
+  .folder-tree .row{display:flex;align-items:baseline;position:relative;padding-left:0}
+  .folder-tree .row .pre{color:var(--grey-2);white-space:pre;flex-shrink:0;user-select:none;margin-right:2px}
+  .folder-tree .lv1{padding-left:4px}
+  .folder-tree .lv2{padding-left:22px}
+  .folder-tree .lv3{padding-left:40px}
+
+  .pd-table{width:100%;border-collapse:collapse;font-size:12px}
+  .pd-table th{font-family:var(--mono);font-size:10px;font-weight:600;color:var(--accent);text-align:left;padding:5px 6px;border-bottom:1px solid var(--accent);letter-spacing:.05em}
+  .pd-table td{padding:5px 6px;border-bottom:1px solid var(--grey-1);vertical-align:top;line-height:1.4}
+  .pd-table .pf{font-weight:600;color:var(--ink);white-space:nowrap}
+  .pd-table .px{font-family:var(--mono);font-size:10px;color:var(--accent)}
+
+  .fc-wrap{background:var(--grey-0);padding:28px 0;margin-top:0}
+  .fc-row{display:flex;align-items:stretch;gap:0;position:relative}
+  .fc-node{flex:1;min-width:0;position:relative;padding:0 10px;display:flex;flex-direction:column}
+  .fc-node .fc-box{background:var(--accent-light);border:1px solid var(--accent-mid);padding:14px 12px;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--accent);line-height:1.35;text-align:center;flex:1}
+  .fc-node .fc-box.gate{background:var(--accent);color:var(--accent-on);border-color:var(--accent)}
+  .fc-node .fc-box.pause{background:var(--warn-light);color:var(--warn);border:1px dashed var(--warn)}
+  .fc-node .fc-sub{font-size:11px;color:var(--grey-3);margin-top:5px;line-height:1.45;text-align:center}
+  .fc-arrow-h{display:flex;align-items:center;justify-content:center;width:32px;flex-shrink:0;font-family:var(--mono);font-size:18px;color:var(--accent);font-weight:400;user-select:none}
+  .fc-wrap-arrow{display:flex;align-items:center;justify-content:flex-end;padding:0 10px;height:32px;font-family:var(--mono);font-size:18px;color:var(--accent);font-weight:400;user-select:none}
+  .fc-spacer{flex:1;min-width:0}
+
+  .stat-bar{display:grid;grid-template-columns:repeat(5,1fr);gap:0;border-top:1px solid var(--accent);border-bottom:1px solid var(--grey-1);margin-top:40px}
+  .stat-bar .sc{padding:20px 22px;border-right:1px solid var(--grey-1);background:var(--grey-0)}
+  .stat-bar .sc:last-child{border-right:none}
+  .stat-bar .sc .sn{font-family:var(--mono);font-size:clamp(36px,3.5vw,52px);font-weight:300;color:var(--accent);line-height:1}
+  .stat-bar .sc .sl{font-size:13px;color:var(--grey-3);margin-top:4px;text-transform:uppercase;letter-spacing:.06em}
+  .stat-bar .sc .sdetail{font-size:12px;color:var(--grey-2);margin-top:2px}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div>
+    <div class="kicker">Skill 系统结构图</div>
+    <h1>social-image-publisher</h1>
+    <p class="deck">3 阶段门禁发布管线 — 小绿书 + 小红书 + 抖音三平台同步。MCP ChromeDevTools 全自动 · fetch + DataTransfer 上传 · 9 条已验证红线 · 每道门禁最多 3 retries。</p>
+  </div>
+  <div class="kpi-strip">
+    <div><div class="kv">3</div><div class="kl">阶段</div></div>
+    <div><div class="kv">3</div><div class="kl">平台</div></div>
+    <div><div class="kv">9</div><div class="kl">红线</div></div>
+    <div><div class="kv">7</div><div class="kl">门禁</div></div>
+    <div><div class="kv">3</div><div class="kl">max retries</div></div>
+  </div>
+</header>
+
+<div class="main-grid">
+
+  <div class="panel clean">
+    <div class="panel-head">发布管线 · 3 阶段 7 门禁</div>
+    <div class="pipeline">
+
+      <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--accent);padding:8px 0;margin-bottom:4px;letter-spacing:.06em">Phase 1 · 内容检查</div>
+
+      <div class="step"><div class="step-inner">
+        <div class="step-num">1.1</div>
+        <div class="step-body"><h3>文案门禁</h3><div class="role">主 agent · max 3 retries</div><div class="desc">标题 ≤20 字？正文含 emoji ≥5？正文含 #hashtag ≥3？FAIL → 补齐，不进 1.2</div></div>
+        <div></div>
+      </div></div>
+
+      <div class="step"><div class="step-inner">
+        <div class="step-num">1.2</div>
+        <div class="step-body"><h3>图片门禁</h3><div class="role">主 agent · max 3 retries</div><div class="desc">PNG 格式？数量 ≥2 张？FAIL → 补图，不进 Phase 2</div></div>
+        <div></div>
+      </div></div>
+
+      <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--accent);padding:8px 0;margin:8px 0 4px;letter-spacing:.06em;border-top:1px solid var(--grey-1)">Phase 2 · 环境</div>
+
+      <div class="step"><div class="step-inner">
+        <div class="step-num">2.1</div>
+        <div class="step-body"><h3>MCP Chrome 就绪检查</h3><div class="role">主 agent · max 3 retries</div><div class="desc">list_pages 确认 3 个 tab：mp.weixin.qq.com · creator.xiaohongshu.com · creator.douyin.com。缺→手动登录</div></div>
+        <div></div>
+      </div></div>
+
+      <div class="step"><div class="step-inner">
+        <div class="step-num">2.2</div>
+        <div class="step-body"><h3>本地 HTTP 图片服务器</h3><div class="role">主 agent · max 3 retries</div><div class="desc">python3 HTTP server + CORS · localhost:8888 可访问？FAIL → 启动 CORS 服务器</div></div>
+        <div></div>
+      </div></div>
+
+      <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--accent);padding:8px 0;margin:8px 0 4px;letter-spacing:.06em;border-top:1px solid var(--grey-1)">Phase 3 · 发布</div>
+
+      <div class="step"><div class="step-inner">
+        <div class="step-num">3.1</div>
+        <div class="step-body"><h3>小绿书发布</h3><div class="role">MCP ChromeDevTools · Vue 3 + ProseMirror</div><div class="desc">navigate 空白编辑器 → fetch+DataTransfer 上传 → 标题双保险(setContent+.value+input) → 描述 &lt;br&gt; innerHTML → #js_submit 保存</div></div>
+        <div></div>
+      </div></div>
+
+      <div class="gate-break eng">
+        <div class="gtag">Gate 3.1 · 5 项检查</div>
+        <div class="gtitle">图片上传完成 + 标题已填 + 描述已填 + input 事件 + 草稿 ID</div>
+        <div class="gitems">
+          <span class="gi">mmbiz.qpic.cn unique URLs ≈ 预期</span>
+          <span class="gi">#title.value + getContent() 非空</span>
+          <span class="gi">ProseMirror[1] textContent 非空</span>
+          <span class="gi">dispatchEvent('input') 已调用</span>
+          <span class="gi">URL 含 appmsgid</span>
+        </div>
+      </div>
+
+      <div class="step"><div class="step-inner">
+        <div class="step-num">3.2</div>
+        <div class="step-body"><h3>小红书发布</h3><div class="role">MCP ChromeDevTools · TipTap + ProseMirror</div><div class="desc">select_page 切 tab → 上传图文 → fetch+DataTransfer(input[0]) → 标题 div.d-input input → 正文 &lt;p&gt; appendChild → _onSave()</div></div>
+        <div></div>
+      </div></div>
+
+      <div class="gate-break eng">
+        <div class="gtag">Gate 3.2 · 4 项检查</div>
+        <div class="gtitle">图片上传完成 + 标题已填 + 正文已填 + _onSave() → truthy</div>
+        <div class="gitems">
+          <span class="gi">图片编辑 + 数量按钮可见</span>
+          <span class="gi">div.d-input input value = 预期</span>
+          <span class="gi">.tiptap.ProseMirror textContent > 0</span>
+          <span class="gi">_onSave() 返回 truthy</span>
+        </div>
+      </div>
+
+      <div class="step"><div class="step-inner">
+        <div class="step-num">3.3</div>
+        <div class="step-body"><h3>抖音发布</h3><div class="role">MCP ChromeDevTools · Semi Design</div><div class="desc">select_page 切 tab → navigate upload → 发布图文 → fetch+DataTransfer(input[0]) → 标题 ≤20字 → 描述 .zone-container textContent → 发布+弹窗处理</div></div>
+        <div></div>
+      </div></div>
+
+      <div class="gate-break eng">
+        <div class="gtag">Gate 3.3 · 4 项检查</div>
+        <div class="gtitle">图片上传完成 + 标题已填 + 描述已填 + URL 跳转 manage?enter_from=publish</div>
+        <div class="gitems">
+          <span class="gi">URL 跳转 post/image</span>
+          <span class="gi">input[type=text] value = 预期 ≤20字</span>
+          <span class="gi">.zone-container textContent > 0</span>
+          <span class="gi">发布后 URL → manage?enter_from=publish</span>
+        </div>
+      </div>
+
+      <div class="gate-break">
+        <div class="gtag">硬阻断 · 每道门禁 4th FAIL</div>
+        <div class="gtitle">第 4 次仍 FAIL → 诚实边界，人工接管</div>
+        <div class="gdetail">严禁跳门禁。每道门 PASS 才进下一道。FAIL 停在当前门修。任何步骤不得跳过。</div>
+      </div>
+
+      <div class="step"><div class="step-inner">
+        <div class="step-num pause">3.4</div>
+        <div class="step-body"><h3>完成报告</h3><div class="role">主 agent · 汇总输出</div><div class="desc">小绿书草稿 ID + 小红书草稿已保存 + 抖音草稿已保存 → === 矩阵发布完成 | {日期} ===</div></div>
+        <div></div>
+      </div></div>
+
+    </div>
+  </div>
+
+  <div class="side-stack">
+
+    <div class="panel">
+      <div class="panel-head">Skill 目录结构</div>
+      <div class="folder-tree">
+        <div class="row lv1"><span class="dir">social-image-publisher/</span></div>
+        <div class="row lv2"><span class="pre">├── </span><span class="file">SKILL.md</span></div>
+        <div class="row lv2"><span class="pre">├── </span><span class="dir">references/</span></div>
+        <div class="row lv3"><span class="pre">│   ├── </span><span class="file">xiaolvshu-workflow.md</span></div>
+        <div class="row lv3"><span class="pre">│   ├── </span><span class="file">xhs-workflow.md</span></div>
+        <div class="row lv3"><span class="pre">│   └── </span><span class="file">system-diagram.html</span></div>
+        <div class="row lv2"><span class="pre">├── </span><span class="dir">scripts/</span></div>
+        <div class="row lv3"><span class="pre">│   └── </span><span class="file">publish_douyin.py</span>  <span class="comment">(备用)</span></div>
+        <div class="row lv2"><span class="pre">└── </span><span class="dir">tips/</span></div>
+        <div class="row lv3"><span class="pre">    └── </span><span class="file">matrix-publishing-pitfalls.md</span></div>
+        <div style="margin-top:6px;font-size:11px;color:var(--grey-2)">上游: evolution-cat-infographic → PNG+文案<br>输出: 3 平台待确认草稿</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">9 条已验证无效红线</div>
+      <table class="tt">
+        <thead><tr><th>#</th><th>禁止</th><th>原因</th></tr></thead>
+        <tbody>
+          <tr><td class="tnum">1</td><td class="tban">改 #js_description.value</td><td class="treason">描述源是 ProseMirror[1]，不是 textarea</td></tr>
+          <tr><td class="tnum">2</td><td class="tban">setContent() 单独用</td><td class="treason">Vue state 更新但保存不序列化</td></tr>
+          <tr><td class="tnum">3</td><td class="tban">Input.insertText</td><td class="treason">绕过框架事件系统</td></tr>
+          <tr><td class="tnum">4</td><td class="tban">小绿书 file input [0]</td><td class="treason">[0]=封面图，内容图用 [1]</td></tr>
+          <tr><td class="tnum">5</td><td class="tban">MCP upload_file 逐张上传</td><td class="treason">编辑器只计入最后 1 张</td></tr>
+          <tr><td class="tnum">6</td><td class="tban">小绿书 &lt;p&gt; 换行</td><td class="treason">保存时被剥离，必须用 &lt;br&gt;</td></tr>
+          <tr><td class="tnum">7</td><td class="tban">小红书 textContent + \n</td><td class="treason">TipTap 不认 \n，必须 &lt;p&gt; appendChild</td></tr>
+          <tr><td class="tnum">8</td><td class="tban">Chrome 9222 直连</td><td class="treason">9222 Chrome 无登录 cookies</td></tr>
+          <tr><td class="tnum">9</td><td class="tban">小绿书旧选择器</td><td class="treason">UI 改版，标题=#title，描述=.share-text__input .ProseMirror</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">三平台差异速查</div>
+      <table class="pd-table">
+        <thead><tr><th></th><th>小绿书</th><th>小红书</th><th>抖音</th></tr></thead>
+        <tbody>
+          <tr><td class="pf">编辑器</td><td>Vue 3 + ProseMirror</td><td>TipTap (ProseMirror)</td><td>Semi Design</td></tr>
+          <tr><td class="pf">标题元素</td><td class="px">#title + __mpTitleEditor</td><td class="px">div.d-input input</td><td class="px">input[type="text"]</td></tr>
+          <tr><td class="pf">标题填法</td><td>setContent() + .value 双保险</td><td>.value + input 事件</td><td>.value + input 事件</td></tr>
+          <tr><td class="pf">正文元素</td><td class="px">.share-text__input .ProseMirror</td><td class="px">.tiptap.ProseMirror</td><td class="px">.zone-container</td></tr>
+          <tr><td class="pf">换行</td><td>&lt;br&gt; innerHTML</td><td>&lt;p&gt; appendChild</td><td>\n textContent</td></tr>
+          <tr><td class="pf">图片上传</td><td class="px">input[type=file][1]</td><td class="px">input[type=file][0]</td><td class="px">input[type=file][0]</td></tr>
+          <tr><td class="pf">保存方式</td><td>#js_submit.click()</td><td>_onSave()</td><td>button "发布"</td></tr>
+          <tr><td class="pf">确认标志</td><td>URL 含 appmsgid</td><td>_onSave() → truthy</td><td>URL → publish</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+
+<div class="panel clean" style="margin-bottom:36px">
+  <div class="panel-head">发布执行链 · 串行门禁</div>
+  <div style="font-size:13px;color:var(--grey-3);margin-bottom:18px">每道门 PASS 才进下一道。FAIL 停在当前门修，max 3 retries。第 4 次仍 FAIL → 诚实边界，人工接管。</div>
+
+  <div class="fc-row">
+    <div class="fc-node"><div class="fc-box gate">Gate 1.1<br>文案检查</div><div class="fc-sub">标题≤20字<br>emoji≥5 · #hashtag≥3</div></div>
+    <div class="fc-arrow-h">→</div>
+    <div class="fc-node"><div class="fc-box gate">Gate 1.2<br>图片检查</div><div class="fc-sub">PNG 格式<br>数量 ≥2 张</div></div>
+    <div class="fc-arrow-h">→</div>
+    <div class="fc-node"><div class="fc-box gate">Gate 2.1<br>MCP Chrome</div><div class="fc-sub">3 tab 就绪<br>小程序·小红书·抖音</div></div>
+    <div class="fc-arrow-h">→</div>
+    <div class="fc-node"><div class="fc-box gate">Gate 2.2<br>HTTP 服务器</div><div class="fc-sub">localhost:8888<br>CORS 可访问</div></div>
+    <div class="fc-arrow-h">→</div>
+    <div class="fc-node"><div class="fc-box">Phase 3<br>发布执行</div><div class="fc-sub">3 平台串行<br>MCP ChromeDevTools</div></div>
+  </div>
+  <div class="fc-wrap-arrow">↓</div>
+  <div class="fc-row">
+    <div class="fc-node"><div class="fc-box gate">Gate 3.1<br>小绿书</div><div class="fc-sub" style="color:var(--accent)">5 项检查<br>fetch+DataTransfer<br>标题双保险 · &lt;br&gt;换行</div></div>
+    <div class="fc-arrow-h">→</div>
+    <div class="fc-node"><div class="fc-box gate">Gate 3.2<br>小红书</div><div class="fc-sub" style="color:var(--accent)">4 项检查<br>fetch+DataTransfer<br>&lt;p&gt; appendChild 换行</div></div>
+    <div class="fc-arrow-h">→</div>
+    <div class="fc-node"><div class="fc-box gate">Gate 3.3<br>抖音</div><div class="fc-sub" style="color:var(--accent)">4 项检查<br>fetch+DataTransfer<br>弹窗处理 · 直接发布</div></div>
+    <div class="fc-arrow-h">→</div>
+    <div class="fc-node"><div class="fc-box pause">Gate 3.4<br>完成报告</div><div class="fc-sub">3 平台草稿 ID<br>汇总确认</div></div>
+    <div class="fc-spacer"></div>
+  </div>
+</div>
+
+<div class="stat-bar">
+  <div class="sc">
+    <div class="sn">3</div>
+    <div class="sl">平台</div>
+    <div class="sdetail">小绿书 · 小红书 · 抖音</div>
+  </div>
+  <div class="sc">
+    <div class="sn">9</div>
+    <div class="sl">已验证红线</div>
+    <div class="sdetail">实战暴露的无效做法</div>
+  </div>
+  <div class="sc">
+    <div class="sn">7</div>
+    <div class="sl">门禁</div>
+    <div class="sdetail">内容×2 · 环境×2 · 发布×3</div>
+  </div>
+  <div class="sc">
+    <div class="sn">1</div>
+    <div class="sl">上传方式</div>
+    <div class="sdetail">fetch + DataTransfer</div>
+  </div>
+  <div class="sc">
+    <div class="sn">3</div>
+    <div class="sl">驱动方式</div>
+    <div class="sdetail">MCP ChromeDevTools · CDP 备用</div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -4,3 +4,4 @@ _runtime/
 __pycache__/
 node_modules/
 output/
+douyin_account.json
